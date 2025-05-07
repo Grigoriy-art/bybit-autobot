@@ -30,12 +30,12 @@ async def webhook(request: Request):
         elif current_position == "Sell" and side == "BUY":
             close_position(symbol, "Buy", API_KEY, API_SECRET)
 
-        # Расчёт объёма ордера
+        # Расчёт объёма
         qty_step, min_qty, min_notional = get_symbol_filters(symbol)
         balance = get_usdt_balance(API_KEY, API_SECRET)
         qty = calculate_order_qty(balance, leverage, price, qty_step, min_qty, min_notional)
 
-        # Размещение рыночного ордера
+        # Создание ордера
         result = place_market_order(symbol, side, qty, API_KEY, API_SECRET)
         return {"status": "success", "details": result}
 
@@ -43,13 +43,103 @@ async def webhook(request: Request):
         print("❌ Ошибка:", e)
         return {"error": str(e)}
 
-def place_market_order(symbol, side, qty, api_key, api_secret):
-    url = "https://api.bybit.com/v5/order/create"
+
+def get_position(symbol, api_key, api_secret):
+    url = "https://api.bybit.com/v5/position/list"
+    params = {"category": "linear", "symbol": symbol}
+    recv_window = 5000
+    timestamp = str(int(time.time() * 1000))
+    query_string = f"category=linear&symbol={symbol}"
+    sign_payload = f"{api_key}{timestamp}{recv_window}{query_string}"
+    signature = hmac.new(bytes(api_secret, "utf-8"), bytes(sign_payload, "utf-8"), hashlib.sha256).hexdigest()
     headers = {
         "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-RECV-WINDOW": str(recv_window),
+    }
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    print("📥 Позиция:", data)
+    if "result" in data and "list" in data["result"] and len(data["result"]["list"]) > 0:
+        pos = data["result"]["list"][0]
+        side = pos["side"]
+        size = float(pos["size"])
+        if size > 0:
+            return side
+    return None
+
+
+def close_position(symbol, side, api_key, api_secret):
+    url = "https://api.bybit.com/v5/order/create"
+    body = {
+        "category": "linear",
+        "symbol": symbol,
+        "side": side,
+        "orderType": "Market",
+        "reduceOnly": True,
+        "timeInForce": "GoodTillCancel",
+        "qty": 100  # можно заменить на get_position_size
+    }
+    recv_window = 5000
+    timestamp = str(int(time.time() * 1000))
+    sign_payload = f"{api_key}{timestamp}{recv_window}{json.dumps(body)}"
+    signature = hmac.new(bytes(api_secret, "utf-8"), bytes(sign_payload, "utf-8"), hashlib.sha256).hexdigest()
+    headers = {
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-RECV-WINDOW": str(recv_window),
         "Content-Type": "application/json"
     }
+    response = requests.post(url, headers=headers, json=body)
+    print("📤 Закрытие позиции:", response.json())
+    return response.json()
 
+
+def get_usdt_balance(api_key, api_secret):
+    url = "https://api.bybit.com/v5/account/wallet-balance"
+    params = {"accountType": "UNIFIED"}
+    recv_window = 5000
+    timestamp = str(int(time.time() * 1000))
+    query_string = "accountType=UNIFIED"
+    sign_payload = f"{api_key}{timestamp}{recv_window}{query_string}"
+    signature = hmac.new(bytes(api_secret, "utf-8"), bytes(sign_payload, "utf-8"), hashlib.sha256).hexdigest()
+    headers = {
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-RECV-WINDOW": str(recv_window),
+    }
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    usdt = float(next((item["availableBalance"] for item in data["result"]["list"] if item["coin"] == "USDT"), 0))
+    print("💰 Баланс USDT:", usdt)
+    return usdt
+
+
+def get_symbol_filters(symbol):
+    url = "https://api.bybit.com/v5/market/instruments-info"
+    params = {"category": "linear", "symbol": symbol}
+    response = requests.get(url, params=params)
+    data = response.json()
+    item = data["result"]["list"][0]
+    qty_step = float(item["lotSizeFilter"]["qtyStep"])
+    min_qty = float(item["lotSizeFilter"]["minOrderQty"])
+    min_notional = float(item["minOrderAmt"])
+    return qty_step, min_qty, min_notional
+
+
+def calculate_order_qty(balance, leverage, price, qty_step, min_qty, min_notional):
+    notional = balance * leverage
+    raw_qty = notional / price
+    rounded_qty = max(min_qty, round(raw_qty / qty_step) * qty_step)
+    print(f"📐 Расчёт объема: balance={balance}, leverage={leverage}, qty={rounded_qty}")
+    return rounded_qty
+
+
+def place_market_order(symbol, side, qty, api_key, api_secret):
+    url = "https://api.bybit.com/v5/order/create"
     body = {
         "category": "linear",
         "symbol": symbol,
@@ -58,27 +148,22 @@ def place_market_order(symbol, side, qty, api_key, api_secret):
         "qty": qty,
         "timeInForce": "GoodTillCancel",
     }
-
     recv_window = 5000
     timestamp = str(int(time.time() * 1000))
     sign_payload = f"{api_key}{timestamp}{recv_window}{json.dumps(body)}"
-
-    signature = hmac.new(
-        bytes(api_secret, "utf-8"),
-        bytes(sign_payload, "utf-8"),
-        hashlib.sha256
-    ).hexdigest()
-
-    headers.update({
+    signature = hmac.new(bytes(api_secret, "utf-8"), bytes(sign_payload, "utf-8"), hashlib.sha256).hexdigest()
+    headers = {
+        "X-BAPI-API-KEY": api_key,
         "X-BAPI-TIMESTAMP": timestamp,
         "X-BAPI-SIGN": signature,
         "X-BAPI-RECV-WINDOW": str(recv_window),
-    })
-
+        "Content-Type": "application/json"
+    }
     response = requests.post(url, headers=headers, json=body)
     print("📤 Ответ от Bybit:", response.json())
     return response.json()
 
-# ✅ Запуск сервера при запуске main.py
+
+# === Запуск сервера ===
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000)
