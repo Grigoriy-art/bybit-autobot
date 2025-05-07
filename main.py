@@ -5,6 +5,7 @@ import hashlib
 import time
 import json
 import requests
+import uvicorn
 
 app = FastAPI()
 
@@ -29,12 +30,12 @@ async def webhook(request: Request):
         elif current_position == "Sell" and side == "BUY":
             close_position(symbol, "Buy", API_KEY, API_SECRET)
 
-        # Вычисляем количество для нового ордера
+        # Расчёт объёма ордера
         qty_step, min_qty, min_notional = get_symbol_filters(symbol)
         balance = get_usdt_balance(API_KEY, API_SECRET)
         qty = calculate_order_qty(balance, leverage, price, qty_step, min_qty, min_notional)
 
-        # Размещаем ордер
+        # Размещение рыночного ордера
         result = place_market_order(symbol, side, qty, API_KEY, API_SECRET)
         return {"status": "success", "details": result}
 
@@ -77,3 +78,7 @@ def place_market_order(symbol, side, qty, api_key, api_secret):
     response = requests.post(url, headers=headers, json=body)
     print("📤 Ответ от Bybit:", response.json())
     return response.json()
+
+# ✅ Запуск сервера при запуске main.py
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
