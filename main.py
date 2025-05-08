@@ -1,3 +1,4 @@
+//@version=6
 from fastapi import FastAPI, Request
 import os
 import hmac
@@ -12,8 +13,11 @@ load_dotenv()
 
 app = FastAPI()
 
-API_KEY = os.getenv("API_KEY")
-API_SECRET = os.getenv("API_SECRET")
+API_KEY = os.getenv("BYBIT_API_KEY")
+API_SECRET = os.getenv("BYBIT_API_SECRET")
+
+if not API_KEY or not API_SECRET:
+    raise ValueError("API_KEY или API_SECRET не загружены из .env файла")
 
 @app.post("/")
 async def webhook(request: Request):
@@ -47,7 +51,7 @@ async def webhook(request: Request):
         print("❌ Ошибка:", e)
         return {"error": str(e)}
 
-# Получение позиции
+# Получение текущей позиции
 def get_position(symbol):
     url = "https://api.bybit.com/v5/position/list"
     params = {"category": "linear", "symbol": symbol}
@@ -61,7 +65,7 @@ def get_position(symbol):
             return pos["side"]
     return None
 
-# Закрытие позиции
+# Закрытие текущей позиции
 def close_position(symbol, side):
     url = "https://api.bybit.com/v5/order/create"
     body = {
@@ -70,15 +74,17 @@ def close_position(symbol, side):
         "side": side,
         "orderType": "Market",
         "reduceOnly": True,
-        "qty": 100,  # Можно заменить на get_position_size() при необходимости
+        "qty": 100,
         "timeInForce": "GoodTillCancel"
     }
     headers = signed_headers(body)
     response = requests.post(url, headers=headers, json=body)
+    if response.status_code != 200:
+        print("❗Ошибка HTTP:", response.status_code, response.text)
     print("📤 Закрытие позиции:", response.json())
     return response.json()
 
-# Размещение рыночного ордера
+# Открытие новой позиции
 def place_market_order(symbol, side, qty):
     url = "https://api.bybit.com/v5/order/create"
     body = {
@@ -91,6 +97,8 @@ def place_market_order(symbol, side, qty):
     }
     headers = signed_headers(body)
     response = requests.post(url, headers=headers, json=body)
+    if response.status_code != 200:
+        print("❗Ошибка HTTP:", response.status_code, response.text)
     return response.json()
 
 # Генерация заголовков с подписью
@@ -98,7 +106,7 @@ def signed_headers(payload_dict_or_params):
     recv_window = 5000
     timestamp = str(int(time.time() * 1000))
     if isinstance(payload_dict_or_params, dict):
-        body = json.dumps(payload_dict_or_params)
+        body = json.dumps(payload_dict_or_params, separators=(",", ":"))
         sign_payload = f"{API_KEY}{timestamp}{recv_window}{body}"
     else:
         qs = "&".join(f"{k}={v}" for k, v in payload_dict_or_params.items())
@@ -112,6 +120,5 @@ def signed_headers(payload_dict_or_params):
         "Content-Type": "application/json"
     }
 
-# Запуск локально (не нужен на Fly.io, только для тестов)
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
