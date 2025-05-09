@@ -21,15 +21,15 @@ if not API_KEY or not API_SECRET:
 @app.post("/")
 async def webhook(request: Request):
     try:
-        body = await request.body()
+        body = (await request.body()).decode("utf-8")  # <--- исправление
         try:
-            data = json.loads(body)
+            data = json.loads(body.decode("utf-8"))
         except Exception:
             print("❌ Невалидный JSON:", body)
             return {"error": "Invalid JSON"}
 
         print("📩 Получен сигнал:", data)
-
+     
         symbol = data.get("symbol", "").upper()
         side = data.get("side", "").upper()
         qty = float(data.get("qty", 10))
