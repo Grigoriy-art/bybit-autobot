@@ -1,4 +1,3 @@
-//@version=6
 from fastapi import FastAPI, Request
 import os
 import hmac
@@ -13,8 +12,8 @@ load_dotenv()
 
 app = FastAPI()
 
-API_KEY = os.getenv("BYBIT_API_KEY")
-API_SECRET = os.getenv("BYBIT_API_SECRET")
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
 
 if not API_KEY or not API_SECRET:
     raise ValueError("API_KEY или API_SECRET не загружены из .env файла")
@@ -22,18 +21,23 @@ if not API_KEY or not API_SECRET:
 @app.post("/")
 async def webhook(request: Request):
     try:
-        data = await request.json()
+        body = await request.body()
+        try:
+            data = json.loads(body)
+        except Exception:
+            print("❌ Невалидный JSON:", body)
+            return {"error": "Invalid JSON"}
+
         print("📩 Получен сигнал:", data)
 
         symbol = data.get("symbol", "").upper()
-        side = data.get("side", "").upper()  # BUY или SELL
+        side = data.get("side", "").upper()
         qty = float(data.get("qty", 10))
         leverage = int(data.get("leverage", 10))
 
         if not symbol or side not in ["BUY", "SELL"]:
             return {"error": "Неверный формат сигнала"}
 
-        # Проверка и закрытие противоположной позиции
         current_position = get_position(symbol)
         if current_position == "Buy" and side == "SELL":
             print("🔁 Закрываем Buy → открываем Sell")
@@ -42,7 +46,6 @@ async def webhook(request: Request):
             print("🔁 Закрываем Sell → открываем Buy")
             close_position(symbol, "Buy")
 
-        # Размещаем ордер
         result = place_market_order(symbol, side, qty)
         print("📤 Ордер отправлен:", result)
         return {"status": "success", "details": result}
@@ -51,7 +54,6 @@ async def webhook(request: Request):
         print("❌ Ошибка:", e)
         return {"error": str(e)}
 
-# Получение текущей позиции
 def get_position(symbol):
     url = "https://api.bybit.com/v5/position/list"
     params = {"category": "linear", "symbol": symbol}
@@ -65,7 +67,6 @@ def get_position(symbol):
             return pos["side"]
     return None
 
-# Закрытие текущей позиции
 def close_position(symbol, side):
     url = "https://api.bybit.com/v5/order/create"
     body = {
@@ -84,7 +85,6 @@ def close_position(symbol, side):
     print("📤 Закрытие позиции:", response.json())
     return response.json()
 
-# Открытие новой позиции
 def place_market_order(symbol, side, qty):
     url = "https://api.bybit.com/v5/order/create"
     body = {
@@ -101,7 +101,6 @@ def place_market_order(symbol, side, qty):
         print("❗Ошибка HTTP:", response.status_code, response.text)
     return response.json()
 
-# Генерация заголовков с подписью
 def signed_headers(payload_dict_or_params):
     recv_window = 5000
     timestamp = str(int(time.time() * 1000))
